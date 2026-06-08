@@ -1,0 +1,11 @@
+OLLAMA_URL = "http://localhost:11434"
+OLLAMA_MODEL = "qwen2.5-coder:14b"
+DB_PATH = "millhaven.db"
+GRID_WIDTH = 100
+GRID_HEIGHT = 100
+GAME_TITLE = "Millhaven"
+PLAYER_START_X = 50
+PLAYER_START_Y = 50
+PLAYER_START_Z = 0
+NPC_TICK_INTERVAL = 3  # NPCs act every N player turns
+MAP_STYLE = "symbols"  # terminal mini-map style
