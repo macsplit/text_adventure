@@ -284,8 +284,6 @@ def render_minimap(player, radius=5, use_color=None, style=None, width_radius=15
         + " " + _colour_text("object", C.magenta, bold=True, use_color=use_color),
         _colour_cell('◈', C.magenta, None, bold=True, use_color=use_color)
         + " " + _colour_text("objects", C.magenta, bold=True, use_color=use_color),
-        _colour_cell('×', C.bright_black, None, bold=True, use_color=use_color)
-        + " " + _colour_text("blocked", C.bright_black, bold=True, use_color=use_color),
     ]
     terrain_legend = [
         _terrain_legend_cell('ground', use_color=use_color) + " ground",
