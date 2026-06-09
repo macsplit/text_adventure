@@ -2556,8 +2556,14 @@ def action_eat(player, parsed):
     if energy_gain:
         db.set_state('passed_out', '0')
     if not from_environment:
-        db.remove_from_inventory(player['id'], food_obj['id'])
-    db.update_object(food_obj['id'], state='consumed', is_visible=0)
+        if props.get('holdsliquid'):
+            # Reusable container — empty it, keep it in inventory
+            empty_props = {k: v for k, v in props.items()
+                           if k not in ('liquid', 'drinkable', 'hydration')}
+            db.update_object(food_obj['id'], properties=json.dumps(empty_props))
+        else:
+            db.remove_from_inventory(player['id'], food_obj['id'])
+            db.update_object(food_obj['id'], state='consumed', is_visible=0)
     db.log_event(int(db.get_state('game_ticks', 0)), 'eat', f"Player ate {food_obj['name']}", player['x'], player['y'], [player['id']], [food_obj['id']])
 
     player['hunger'] = new_hunger
@@ -2568,6 +2574,60 @@ def action_eat(player, parsed):
     )
     verb = "drink" if props.get('drinkable') or props.get('alcohol') or props.get('liquid') else "eat"
     return f"You {verb} the {food_obj['name']}.\n{taste}"
+
+
+def action_fill(player, parsed):
+    target = _clean_target_name(parsed.get('target') or '')
+    x, y, z = player['x'], player['y'], player['z']
+
+    container = None
+    for oid in db.get_character_inventory(player['id']):
+        obj = db.get_object(oid)
+        if not obj:
+            continue
+        props = json.loads(obj.get('properties') or '{}')
+        if props.get('holdsliquid') and (not target or target in obj['name'].lower()):
+            container = obj
+            break
+
+    if not container:
+        return f"You have no '{target}' to fill." if target else "You have nothing to fill."
+
+    c_props = json.loads(container.get('properties') or '{}')
+    if c_props.get('liquid'):
+        return f"The {container['name']} is already full."
+
+    # Look for a water source on this tile or immediately adjacent
+    loc = db.get_location(x, y, z)
+    water_source = None
+    if loc and loc.get('terrain') == 'stream':
+        water_source = 'the stream'
+    if not water_source:
+        tiles = [(x, y, z)] + [(x + dx, y + dy, z) for dx, dy in [(0, 1), (0, -1), (1, 0), (-1, 0)]]
+        for cx, cy, cz in tiles:
+            if not water_source:
+                adj_loc = db.get_location(cx, cy, cz)
+                if adj_loc and adj_loc.get('terrain') == 'stream':
+                    water_source = 'the stream'
+            for obj in db.get_objects_at(cx, cy, cz):
+                props = json.loads(obj.get('properties') or '{}')
+                if props.get('liquid') == 'water' or props.get('water'):
+                    water_source = f'the {obj["name"]}'
+                    break
+            if water_source:
+                break
+
+    if not water_source:
+        return "There is no water source here to fill from."
+
+    c_props['liquid'] = 'water'
+    c_props['drinkable'] = True
+    c_props['hydration'] = 50
+    db.update_object(container['id'], properties=json.dumps(c_props))
+    db.log_event(int(db.get_state('game_ticks', 0)), 'fill',
+                 f"Player filled {container['name']} from {water_source}",
+                 x, y, [player['id']], [container['id']])
+    return f"You fill the {container['name']} from {water_source}."
 
 
 def action_drink(player, parsed):
@@ -2677,6 +2737,14 @@ def action_drink(player, parsed):
         return f"There is no {target} here to drink."
     if unsafe_match:
         return f"You have the {unsafe_match}, but it is not safe to drink."
+    # Check for empty fillable containers to give a useful hint
+    for oid in db.get_character_inventory(player['id']):
+        obj = db.get_object(oid)
+        if obj:
+            props = json.loads(obj.get('properties') or '{}')
+            if props.get('holdsliquid') and not props.get('liquid'):
+                if not target or target in obj['name'].lower():
+                    return f"Your {obj['name']} is empty. Fill it from a water source first."
     return "There is nothing here to drink."
 
 
@@ -3029,6 +3097,7 @@ ACTION_MAP = {
     'status':    action_status,
     'eat':       action_eat,
     'drink':     action_drink,
+    'fill':      action_fill,
     'sleep':     action_sleep,
     'wait':      action_wait,
     'think':     action_think,

@@ -92,6 +92,7 @@ def parse_command(player_input, context):
         "  sleep      - rest or sleep\n"
         "  eat        - consume food\n"
         "  drink      - drink water, ale, or other liquid\n"
+        "  fill       - fill a container (canteen, flask) from a water source\n"
         "  attack     - act violently toward something\n"
         "  think      - internal thought, no external effect\n"
         "  inventory  - check own inventory\n"
