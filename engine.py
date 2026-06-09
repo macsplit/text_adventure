@@ -2595,6 +2595,26 @@ def action_drink(player, parsed):
         if is_liquid_like and not unsafe_match:
             unsafe_match = obj['name']
 
+    # Drink directly from a stream tile
+    _stream_words = ('stream', 'water', 'river', 'brook', 'creek')
+    loc = db.get_location(x, y, z)
+    if loc and loc.get('terrain') == 'stream':
+        if not target or any(w in target.lower() for w in _stream_words):
+            hydration = 45
+            new_thirst = max(0, p.get('thirst', 30) - hydration)
+            energy_gain = 8 if p['energy'] == 0 else 0
+            db.update_character(player['id'], thirst=new_thirst,
+                                energy=min(100, p['energy'] + energy_gain))
+            if energy_gain:
+                db.set_state('passed_out', '0')
+            player['hunger'] = p.get('hunger', 50)
+            taste = llm.generate_sense(
+                sense='taste',
+                target='cold stream water',
+                **_sense_location_args(player),
+            )
+            return f"You kneel at the stream's edge and drink.\n{taste}"
+
     # Try containers/sources at exact location (water pump, trough, bucket)
     for obj in db.get_objects_at(x, y, z):
         props = json.loads(obj.get('properties', '{}'))
