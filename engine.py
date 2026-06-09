@@ -1208,14 +1208,15 @@ def action_take(player, parsed):
 
     target = _clean_target_name(target)
 
-    # Already carrying it?
-    for oid in db.get_character_inventory(player['id']):
-        o = db.get_object(oid)
-        if o and target.lower() in o['name'].lower():
-            return f"You already have the {o['name']}."
-
     x, y, z = player['x'], player['y'], player['z']
     obj = db.find_object_by_name(target, x=x, y=y, z=z)
+
+    # Only block with "already have it" when there is nothing here to take instead
+    if not obj:
+        for oid in db.get_character_inventory(player['id']):
+            o = db.get_object(oid)
+            if o and target.lower() in o['name'].lower():
+                return f"You already have the {o['name']}."
 
     if not obj:
         nearby = _nearby_visible_object(target, player)
