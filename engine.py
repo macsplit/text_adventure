@@ -881,6 +881,15 @@ def action_move(player, parsed):
     x, y, z = player['x'], player['y'], player['z']
     nx, ny, nz = x + delta[0], y + delta[1], z + delta[2]
 
+    # Edge-of-world: two-step warning before game over
+    if delta[2] == 0 and (nx < 0 or nx >= w.GRID_WIDTH or ny < 0 or ny >= w.GRID_HEIGHT):
+        pending = player.get('_pending_leave_direction', '')
+        if pending == direction:
+            db.set_state('game_over', '1')
+            return '__LEAVE_GAME__'
+        db.set_state('pending_leave_direction', direction)
+        return ("If you go in that direction you will leave the environs of Millhaven.")
+
     ok, reason = w.can_move_between(x, y, z, nx, ny, nz)
     if not ok:
         if delta[2] != 0:
@@ -3119,6 +3128,11 @@ def process_input(raw_input, player):
     # Dead players get nothing
     if db.get_state('game_over') == '1':
         return "You are dead."
+
+    # Save then clear the edge-leave pending state — any action other than
+    # immediately repeating the same edge-move direction resets the warning.
+    player['_pending_leave_direction'] = db.get_state('pending_leave_direction') or ''
+    db.set_state('pending_leave_direction', '')
 
     # Passed-out players can only eat, drink, look around, or check status
     if db.get_state('passed_out') == '1':

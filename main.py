@@ -378,6 +378,13 @@ def game_loop(player):
         player = db.get_player()
 
         print_separator()
+        if result == '__LEAVE_GAME__':
+            print(colour(wrap("You continue on your travels, leaving Millhaven behind you. "
+                              "You will never return."), C.yellow, C.bold))
+            print()
+            print(colour("  -- GAME OVER --", C.red, C.bold))
+            print()
+            break
         print_output(result, player)
 
         # Biological needs tick
