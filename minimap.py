@@ -35,9 +35,9 @@ def _bg256(code):
 
 # Brickish/greyish 256-colour shades used to tint individual buildings so that
 # adjacent ones stand apart on the map. Picked from the same warm-brown/grey
-# family as the default 'building' terrain colour (95) so the map keeps a
+# family as the default 'building' terrain colour so the map keeps a
 # coherent palette while still letting neighbours read as distinct structures.
-_BUILDING_SHADES = [95, 131, 137, 138, 144, 180, 102, 246, 96, 173, 252, 248]
+_BUILDING_SHADES = [144, 136, 101, 59, 103, 180, 181, 144, 137, 180, 187, 179]
 BUILDING_BG = [_bg256(code) for code in _BUILDING_SHADES]
 
 
@@ -98,21 +98,21 @@ def _building_bg(building_id):
 
 
 TERRAIN_BG = {
-    'road': _bg256(94),
-    'track': _bg256(130),
-    'path': _bg256(136),
-    'building': _bg256(95),
+    'road': _bg256(247),
+    'track': _bg256(180),
+    'path': _bg256(139),
+    'building': _bg256(144),
     'upstairs': _bg256(137),
     'cellar': _bg256(238),
-    'field': _bg256(28),
-    'farmland': _bg256(58),
-    'farmyard': _bg256(94),
-    'wilderness': _bg256(22),
-    'market': _bg256(178),
-    'park': _bg256(34),
-    'stream': _bg256(24),
-    'stairs': _bg256(220),
-    'ground': _bg256(64),
+    'field': _bg256(149),
+    'farmland': _bg256(107),
+    'farmyard': _bg256(95),
+    'wilderness': _bg256(107),
+    'market': _bg256(186),
+    'park': _bg256(107),
+    'stream': _bg256(115),
+    'stairs': _bg256(178),
+    'ground': _bg256(65),
 }
 
 TERRAIN_FALLBACK = {
@@ -261,10 +261,10 @@ def render_minimap(player, radius=5, use_color=None, style=None, width_radius=15
             if x == px and y == py:
                 cell = _colour_cell('✚', C.bright_white, bg, bold=True, use_color=use_color)
             elif pos in npc_labels:
-                cell = _colour_cell(npc_labels[pos], C.yellow, bg, bold=True, use_color=use_color)
+                cell = _colour_cell(npc_labels[pos], _fg256(58), bg, bold=True, use_color=use_color)
             elif pos in object_tiles:
                 symbol = '◈' if len(object_tiles[pos]) > 1 else '◆'
-                cell = _colour_cell(symbol, C.magenta, bg, bold=True, use_color=use_color)
+                cell = _colour_cell(symbol, _fg256(59), bg, bold=True, use_color=use_color)
             elif loc is None or not loc.get('is_enterable', 1):
                 cell = _colour_cell('×', C.bright_black, bg, bold=True, use_color=use_color)
             else:
