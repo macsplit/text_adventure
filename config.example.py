@@ -27,10 +27,10 @@ EMBEDDED_MODEL_PATH = ""  # e.g. "/home/user/models/Qwen3-4B-Instruct-Q4_K_M.ggu
 # Requires a free HuggingFace account and accepting the model licence.
 # Ignored when EMBEDDED_MODEL_PATH points to an existing file.
 EMBEDDED_MODEL_DIR = os.path.expanduser("~/.local/share/millhaven/models")
-EMBEDDED_MODEL_FILENAME = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+EMBEDDED_MODEL_FILENAME = "Qwen3-1.7B-Q4_K_M.gguf"
 EMBEDDED_MODEL_URL = (
-    "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF"
-    "/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF"
+    "/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
 )
 # HuggingFace token — required if the download returns 401.
 # Generate one at https://huggingface.co/settings/tokens

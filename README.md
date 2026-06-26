@@ -68,9 +68,9 @@ If `EMBEDDED_MODEL_PATH` is left empty, the game will attempt to download
 account and accepting the model licence — if you get a 401 error, see the
 note in `config.py`.
 
-**Recommended model:** Qwen3 4B Q4_K_M (~2.5 GB, ~3.5 GB RAM). Runs well on
-any modern laptop. Smaller alternatives (1–2 GB) work but produce noticeably
-weaker narrative.
+**Default model:** Qwen3 1.7B Q4_K_M (~1.1 GB, ~2 GB RAM). Fast on most
+hardware. For stronger narrative at the cost of speed, point
+`EMBEDDED_MODEL_PATH` at a 4B or 7B GGUF instead.
 
 ### Choosing a backend
 

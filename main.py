@@ -76,7 +76,7 @@ def _bootstrap_config():
                 embedded_path = ask("Path to .gguf file")
         else:
             print()
-            print("  The game can download Qwen3VL-4B-Instruct (~2.5 GB) from")
+            print("  The game can download Qwen3-1.7B (~1.1 GB) from")
             print("  HuggingFace on first run. Some repos require a free account")
             print("  and a token — leave blank to try without.")
             hf_token = ask("HuggingFace token (blank to skip)", "")
@@ -102,10 +102,10 @@ def _bootstrap_config():
         "",
         f'EMBEDDED_MODEL_PATH     = "{embedded_path}"',
         f'EMBEDDED_MODEL_DIR      = os.path.expanduser("~/.local/share/millhaven/models")',
-        f'EMBEDDED_MODEL_FILENAME = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"',
+        f'EMBEDDED_MODEL_FILENAME = "Qwen3-1.7B-Q4_K_M.gguf"',
         'EMBEDDED_MODEL_URL = (',
-        '    "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF"',
-        '    "/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf"',
+        '    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF"',
+        '    "/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"',
         ')',
         f'HF_TOKEN = "{hf_token}"',
     ]
