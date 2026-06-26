@@ -1,7 +1,11 @@
+"""
+Copy this file to config.py and edit to suit your setup.
+config.py is gitignored so your local settings (including any HF token) stay private.
+"""
 import os
 
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen2.5-coder:14b"
+OLLAMA_MODEL = "qwen2.5:14b"
 DB_PATH = "millhaven.db"
 GRID_WIDTH = 100
 GRID_HEIGHT = 100
@@ -23,10 +27,10 @@ EMBEDDED_MODEL_PATH = ""  # e.g. "/home/user/models/Qwen3-4B-Instruct-Q4_K_M.ggu
 # Requires a free HuggingFace account and accepting the model licence.
 # Ignored when EMBEDDED_MODEL_PATH points to an existing file.
 EMBEDDED_MODEL_DIR = os.path.expanduser("~/.local/share/millhaven/models")
-EMBEDDED_MODEL_FILENAME = "Qwen3-4B-Instruct-Q4_K_M.gguf"
+EMBEDDED_MODEL_FILENAME = "Qwen3-VL-4B-Instruct-Q4_K_M.gguf"
 EMBEDDED_MODEL_URL = (
-    "https://huggingface.co/bartowski/Qwen3-4B-Instruct-GGUF"
-    "/resolve/main/Qwen3-4B-Instruct-Q4_K_M.gguf"
+    "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF"
+    "/resolve/main/Qwen3-VL-4B-Instruct-Q4_K_M.gguf"
 )
 # HuggingFace token — required if the download returns 401.
 # Generate one at https://huggingface.co/settings/tokens

@@ -12,6 +12,9 @@ A text adventure set in a quiet English village, driven by a local LLM.
 ```bash
 pip install -r requirements.txt
 
+# Create your local config (gitignored — safe to put tokens here)
+cp config.example.py config.py
+
 # Generate the world (run once)
 python init_town.py
 
