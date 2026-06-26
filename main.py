@@ -17,7 +17,7 @@ except ImportError:
 import database as db
 import engine
 import llm
-from config import OLLAMA_MODEL, DB_PATH, NPC_TICK_INTERVAL, GAME_TITLE, PLAYER_START_X, PLAYER_START_Y
+from config import DB_PATH, NPC_TICK_INTERVAL, GAME_TITLE, PLAYER_START_X, PLAYER_START_Y
 
 
 WIDTH = 78  # text wrap width
@@ -80,6 +80,45 @@ def print_banner():
 
 def print_separator():
     print(colour("-" * WIDTH, C.bright_black))
+
+
+class _StreamPrinter:
+    """Receives LLM tokens, prints them immediately, strips **markup** on the fly."""
+
+    def __init__(self):
+        self.started = False
+        self._col = 0
+        self._star = False  # buffering a lone '*' to check for '**'
+
+    def feed(self, token):
+        # Strip **bold** markers, handling splits across token boundaries.
+        out = ''
+        for ch in token:
+            if ch == '*':
+                if self._star:
+                    self._star = False  # second '*' — discard both
+                else:
+                    self._star = True   # first '*' — hold
+            else:
+                if self._star:
+                    out += '*'          # lone '*', not a pair — keep it
+                    self._star = False
+                out += ch
+        if not out:
+            return
+        if not self.started:
+            print()
+            self.started = True
+        for ch in out:
+            if ch == '\n':
+                print(flush=True)
+                self._col = 0
+            else:
+                print(ch, end='', flush=True)
+                self._col += 1
+                if self._col >= WIDTH:
+                    print(flush=True)
+                    self._col = 0
 
 
 _GENERIC_LOCATION_NAMES = {
@@ -279,17 +318,12 @@ def check_prerequisites():
         print("Run:  python init_town.py")
         sys.exit(1)
 
-    print(f"Connecting to Ollama ({OLLAMA_MODEL})...", end=' ', flush=True)
-    ok, available_models = llm.check_ollama()
+    print("Initialising LLM backend...")
+    ok, status = llm.init_backend()
     if ok:
-        print(colour("OK", C.green, C.bold))
+        print(colour(f"  {status}", C.green, C.bold))
     else:
-        print(colour("FAILED", C.red, C.bold))
-        print(f"\nCould not connect to Ollama or model '{OLLAMA_MODEL}' not found.")
-        if available_models:
-            print("Available models:", ', '.join(available_models))
-        print("\nYou can change the model in config.py.")
-        print("To install a model: ollama pull qwen2.5:14b")
+        print(colour(f"  {status}", C.red, C.bold))
         choice = input("\nContinue anyway (LLM features will use fallbacks)? [y/N] ")
         if choice.lower() != 'y':
             sys.exit(1)
@@ -371,13 +405,27 @@ def game_loop(player):
         db.set_state('game_ticks', ticks + 1)
         turn += 1
 
+        # Show separator immediately; begin streaming narrative tokens to terminal.
+        print_separator()
+        streamer = _StreamPrinter() if USE_COLOR else None
+        if streamer:
+            llm.set_narrative_stream(streamer.feed)
+            print('\033[s', end='', flush=True)  # save cursor position
+
         # Process player action
         result = engine.process_input(raw, player)
+
+        if streamer:
+            llm.clear_narrative_stream()
 
         # Refresh player state from DB (action handlers may have updated it)
         player = db.get_player()
 
-        print_separator()
+        # If streaming produced visible output, wipe it and reprint with full
+        # entity highlighting via print_output().
+        if streamer and streamer.started:
+            print('\033[u\033[0J', end='', flush=True)
+
         if result == '__LEAVE_GAME__':
             print(colour(wrap("You continue on your travels, leaving Millhaven behind you. "
                               "You will never return."), C.yellow, C.bold))

@@ -1,12 +1,22 @@
 """
-Ollama API interface.
-All LLM calls go through here. We use the /api/chat endpoint.
+LLM backend abstraction.
+Supports Ollama (external server) and llama-cpp-python (embedded, default).
+Call init_backend() once at startup before any LLM calls.
 """
 import json
+import os
+import re
 import requests
-from config import OLLAMA_URL, OLLAMA_MODEL
+from config import (
+    OLLAMA_URL, OLLAMA_MODEL,
+    LLM_BACKEND,
+    EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME, EMBEDDED_MODEL_URL,
+)
 
 _SESSION = requests.Session()
+_backend_type = None  # "ollama" | "embedded" | None
+_llama = None         # llama_cpp.Llama instance when using embedded backend
+_narrative_stream_cb = None  # callable(token_str) | None — set by main.py
 
 # Injected into every generative system prompt to prevent hallucinated mechanics.
 # Keep this compact — it runs on every LLM call.
@@ -35,29 +45,101 @@ _WORLD_RULES = (
 )
 
 
-def _chat(messages, temperature=0.7, max_tokens=512):
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": messages,
-        "stream": False,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-        }
-    }
-    try:
-        resp = _SESSION.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["message"]["content"].strip()
-    except requests.exceptions.ConnectionError:
-        return None
-    except Exception as e:
-        return None
+# ---------------------------------------------------------------------------
+# Backend initialisation
+# ---------------------------------------------------------------------------
+
+def _download_model(dest_path):
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    part_path = dest_path + ".part"
+    print(f"\n  Downloading {EMBEDDED_MODEL_FILENAME} (~2.5 GB) ...")
+    resp = _SESSION.get(EMBEDDED_MODEL_URL, stream=True, timeout=60)
+    resp.raise_for_status()
+    total = int(resp.headers.get('content-length', 0))
+    downloaded = 0
+    with open(part_path, 'wb') as f:
+        for chunk in resp.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    mb_done = downloaded / 1_048_576
+                    mb_total = total / 1_048_576
+                    pct = downloaded / total * 100
+                    print(f"\r  {mb_done:.0f} / {mb_total:.0f} MB  ({pct:.0f}%)",
+                          end='', flush=True)
+    print()
+    os.rename(part_path, dest_path)
+    print("  Download complete.")
 
 
-def check_ollama():
-    """Return True if Ollama is reachable and the model is available."""
+def init_backend():
+    """
+    Initialise the LLM backend. Returns (ok: bool, status: str).
+    Should be called once at startup before any LLM calls.
+    """
+    global _backend_type, _llama
+
+    if _backend_type is not None:
+        return True, _backend_type
+
+    backend = LLM_BACKEND
+
+    if backend == "auto":
+        ok, _ = _check_ollama_raw()
+        backend = "ollama" if ok else "embedded"
+
+    if backend == "ollama":
+        ok, models = _check_ollama_raw()
+        if ok:
+            _backend_type = "ollama"
+            return True, f"Ollama ({OLLAMA_MODEL})"
+        msg = f"Ollama unreachable or model '{OLLAMA_MODEL}' not found."
+        if models:
+            msg += f" Available: {', '.join(models)}"
+        msg += " — set LLM_BACKEND or OLLAMA_MODEL in config.py."
+        return False, msg
+
+    if backend == "embedded":
+        try:
+            from llama_cpp import Llama
+        except ImportError:
+            return False, (
+                "llama-cpp-python is not installed.\n"
+                "  Run: pip install llama-cpp-python"
+            )
+
+        model_path = os.path.join(EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME)
+
+        if not os.path.exists(model_path):
+            try:
+                _download_model(model_path)
+            except Exception as exc:
+                return False, f"Model download failed: {exc}"
+
+        print(f"  Loading model (may take ~30 s on first run)...", end=' ', flush=True)
+        try:
+            _llama = Llama(
+                model_path=model_path,
+                n_ctx=4096,
+                n_threads=os.cpu_count() or 4,
+                verbose=False,
+            )
+        except Exception as exc:
+            return False, f"Failed to load model: {exc}"
+        print("done.")
+        _backend_type = "embedded"
+        return True, f"Embedded ({EMBEDDED_MODEL_FILENAME})"
+
+    return False, f"Unknown LLM_BACKEND value '{backend}' in config.py."
+
+
+# ---------------------------------------------------------------------------
+# Internal chat helpers
+# ---------------------------------------------------------------------------
+
+def _check_ollama_raw():
+    """Return (ok, [model_names]) for the configured Ollama instance."""
     try:
         resp = _SESSION.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         models = resp.json().get("models", [])
@@ -66,6 +148,164 @@ def check_ollama():
     except Exception:
         return False, []
 
+
+def _chat_ollama(messages, temperature, max_tokens):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    try:
+        resp = _SESSION.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["message"]["content"].strip()
+    except Exception:
+        return None
+
+
+def _chat_embedded(messages, temperature, max_tokens):
+    # Append /no_think to the last user message to suppress Qwen3 thinking blocks.
+    msgs = [dict(m) for m in messages]
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i]['role'] == 'user':
+            if '/no_think' not in msgs[i]['content']:
+                msgs[i]['content'] += '\n/no_think'
+            break
+    try:
+        result = _llama.create_chat_completion(
+            messages=msgs,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        content = result['choices'][0]['message']['content'].strip()
+        # Strip any <think>…</think> blocks that slipped through.
+        content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+        return content or None
+    except Exception:
+        return None
+
+
+def _chat(messages, temperature=0.7, max_tokens=512):
+    if _backend_type == "ollama":
+        return _chat_ollama(messages, temperature, max_tokens)
+    if _backend_type == "embedded":
+        return _chat_embedded(messages, temperature, max_tokens)
+    return None
+
+
+def _chat_ollama_stream(messages, temperature, max_tokens, on_token):
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": {"temperature": temperature, "num_predict": max_tokens},
+    }
+    full = []
+    try:
+        with _SESSION.post(f"{OLLAMA_URL}/api/chat", json=payload,
+                           timeout=60, stream=True) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines(decode_unicode=True):
+                if line:
+                    data = json.loads(line)
+                    token = data.get("message", {}).get("content", "")
+                    if token:
+                        on_token(token)
+                        full.append(token)
+                    if data.get("done"):
+                        break
+        return ''.join(full).strip() or None
+    except Exception:
+        return None
+
+
+def _chat_embedded_stream(messages, temperature, max_tokens, on_token):
+    msgs = [dict(m) for m in messages]
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i]['role'] == 'user':
+            if '/no_think' not in msgs[i]['content']:
+                msgs[i]['content'] += '\n/no_think'
+            break
+    full = []
+    # State machine to filter <think>…</think> blocks before emitting tokens.
+    in_think = None   # None=unknown, True=inside block, False=normal
+    think_buf = ''
+    try:
+        for chunk in _llama.create_chat_completion(
+            messages=msgs, temperature=temperature, max_tokens=max_tokens, stream=True,
+        ):
+            token = (chunk['choices'][0].get('delta', {}) or {}).get('content', '') or ''
+            if not token:
+                continue
+            full.append(token)
+            if in_think is None:
+                think_buf += token
+                if len(think_buf) >= len('<think>'):
+                    if think_buf.startswith('<think>'):
+                        in_think = True
+                        think_buf = think_buf[len('<think>'):]
+                    else:
+                        in_think = False
+                        on_token(think_buf)
+                        think_buf = ''
+            elif in_think:
+                think_buf += token
+                idx = think_buf.find('</think>')
+                if idx != -1:
+                    in_think = False
+                    think_buf = think_buf[idx + len('</think>'):].lstrip('\n')
+                    if think_buf:
+                        on_token(think_buf)
+                    think_buf = ''
+            else:
+                on_token(token)
+        if think_buf and not in_think:
+            on_token(think_buf)
+        content = re.sub(r'<think>.*?</think>', '', ''.join(full), flags=re.DOTALL).strip()
+        return content or None
+    except Exception:
+        return None
+
+
+def _chat_narrative(messages, temperature=0.7, max_tokens=512):
+    """Like _chat() but routes tokens through the narrative stream callback when set."""
+    cb = _narrative_stream_cb
+    if cb is None:
+        return _chat(messages, temperature, max_tokens)
+    if _backend_type == "ollama":
+        return _chat_ollama_stream(messages, temperature, max_tokens, cb)
+    if _backend_type == "embedded":
+        return _chat_embedded_stream(messages, temperature, max_tokens, cb)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public backward-compat helper (used by init_town.py etc.)
+# ---------------------------------------------------------------------------
+
+def check_ollama():
+    """Return (ok, [model_names]). Kept for backward compatibility."""
+    return _check_ollama_raw()
+
+
+def set_narrative_stream(callback):
+    """Direct narrative LLM tokens to callback(token_str) as they are generated."""
+    global _narrative_stream_cb
+    _narrative_stream_cb = callback
+
+
+def clear_narrative_stream():
+    global _narrative_stream_cb
+    _narrative_stream_cb = None
+
+
+# ---------------------------------------------------------------------------
+# Public LLM functions (all game code calls these)
+# ---------------------------------------------------------------------------
 
 def parse_command(player_input, context):
     """
@@ -130,7 +370,6 @@ def parse_command(player_input, context):
 
     if result:
         try:
-            # Strip any markdown code fences if present
             cleaned = result.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("```")[1]
@@ -166,7 +405,6 @@ def _fallback_parse(text):
         return _r("status", interpretation="Check status")
     if t.startswith('say ') or t.startswith('"'):
         speech = text[4:] if t.startswith('say ') else text.strip('"')
-        # "say X to NAME" — extract the target from the speech
         target = None
         if ' to ' in speech.lower():
             parts = speech.rsplit(' to ', 1)
@@ -223,7 +461,7 @@ def generate_query_response(question, context):
         + _WORLD_RULES
     )
     user_msg = f"Context: {context}\n\nQuestion: {question}"
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.5,
@@ -259,7 +497,7 @@ def generate_narrative(situation, context, tone="descriptive"):
     )
     user_msg = f"Context: {context}\n\nDescribe this: {situation}"
 
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.8,
@@ -336,7 +574,7 @@ def examine_environment(target, location_name, terrain, time_of_day, weather, co
         f"The player looks closely at: {target}\n\n"
         "Describe what they see (or explain it isn't here):"
     )
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.8,
@@ -378,7 +616,6 @@ def generate_sense(sense, target, location_name, terrain, building_name,
     if building_name:
         setting_str += f", inside {building_name}"
 
-    # For targeted touch: strictly tactile, no visual bleed
     if sense == 'feel' and target:
         system = (
             "You are the narrator of a quiet English village text adventure. "
@@ -421,7 +658,7 @@ def generate_sense(sense, target, location_name, terrain, building_name,
             f"{target_str}\n\n"
             f"Describe {outcome}:"
         )
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.85,
@@ -462,7 +699,7 @@ def examine_npc(npc_name, npc_age, npc_occupation, npc_personality, npc_mood,
         f"Currently: {npc_activity or 'standing nearby'}.\n\n"
         "Describe them and their reaction to being observed:"
     )
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.85,
@@ -509,7 +746,7 @@ def generate_npc_response(npc_name, npc_personality, npc_mood, player_speech, co
         + f"A stranger says to you: \"{player_speech}\"\n\n"
         f"How do you respond?"
     )
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.85,
@@ -588,7 +825,7 @@ def generate_location_description(location_name, terrain, building_name, time_of
         + "\n\nDescribe this location:"
     )
 
-    result = _chat(
+    result = _chat_narrative(
         [{"role": "system", "content": system},
          {"role": "user", "content": user_msg}],
         temperature=0.75,
@@ -653,7 +890,6 @@ def generate_npc_spontaneous_speech(npc_name, npc_personality, npc_mood,
             to_part, speech_part = cleaned.split('|', 1)
             directed_at = to_part.replace('TO:', '').strip().lower()
             speech = speech_part.replace('SPEECH:', '').strip().strip('"')
-            # Sanitise directed_at to a known value
             valid = {'self', 'player'} | {n.lower() for n in nearby_names}
             if directed_at not in valid:
                 directed_at = 'self'
@@ -661,7 +897,6 @@ def generate_npc_spontaneous_speech(npc_name, npc_personality, npc_mood,
         except Exception:
             pass
 
-    # Fallback: treat whole result as self-speech
     return {"speech": cleaned.strip('"'), "directed_at": "self"}
 
 

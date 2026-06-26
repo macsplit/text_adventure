@@ -1,3 +1,5 @@
+import os
+
 OLLAMA_URL = "http://localhost:11434"
 OLLAMA_MODEL = "qwen2.5-coder:14b"
 DB_PATH = "millhaven.db"
@@ -9,3 +11,10 @@ PLAYER_START_Y = 50
 PLAYER_START_Z = 0
 NPC_TICK_INTERVAL = 3  # NPCs act every N player turns
 MAP_STYLE = "symbols"  # terminal mini-map style
+
+LLM_BACKEND = "auto"  # "auto" | "ollama" | "embedded"
+EMBEDDED_MODEL_DIR = os.path.expanduser("~/.local/share/millhaven/models")
+EMBEDDED_MODEL_FILENAME = "Qwen3-4B-Q4_K_M.gguf"
+EMBEDDED_MODEL_URL = (
+    "https://huggingface.co/bartowski/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
+)
