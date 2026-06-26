@@ -1,21 +1,16 @@
 # Millhaven
 
-A text adventure set in a quiet English village, driven by a local LLM via Ollama.
+A text adventure set in a quiet English village, driven by a local LLM.
 
 ## Requirements
 
 - Python 3.9+
-- [Ollama](https://ollama.ai) running locally
-- A model pulled in Ollama (default: `qwen2.5:14b`)
+- An LLM — either via [Ollama](https://ollama.ai) or an embedded model (see below)
 
-## Setup
+## Quick start
 
 ```bash
-# Install Python dependencies
 pip install -r requirements.txt
-
-# Pull a model into Ollama (if not already done)
-ollama pull qwen2.5:14b
 
 # Generate the world (run once)
 python init_town.py
@@ -24,11 +19,67 @@ python init_town.py
 python main.py
 ```
 
-## Changing the model
+On first run, `main.py` looks for Ollama. If it isn't running it falls back to
+the embedded model mode automatically.
 
-Edit `config.py` and change `OLLAMA_MODEL`. Any model available in Ollama works.
-Smaller models (e.g. `qwen2.5:7b`, `llama3.2:3b`) run faster but produce less
-nuanced narrative.
+---
+
+## LLM backends
+
+### Option A — Ollama (default if running)
+
+Install [Ollama](https://ollama.ai), pull a model, and the game will use it
+automatically:
+
+```bash
+ollama pull qwen2.5:14b
+```
+
+To use a different model, set `OLLAMA_MODEL` in `config.py`. Smaller models
+such as `qwen2.5:7b` or `llama3.2:3b` run faster but produce less nuanced
+narrative.
+
+### Option B — Embedded model (no Ollama needed)
+
+The embedded backend runs a GGUF model in-process via
+[llama-cpp-python](https://github.com/abetlen/llama-cpp-python). Install it
+with the pre-built CPU wheels to avoid a C++ compilation step:
+
+```bash
+pip install llama-cpp-python \
+  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+```
+
+Then point the game at a model file. **The simplest approach is to use a file
+you already have** — anything downloaded by Ollama, LM Studio, or a direct
+browser download will work:
+
+```python
+# config.py
+EMBEDDED_MODEL_PATH = "/path/to/your-model-Q4_K_M.gguf"
+```
+
+If `EMBEDDED_MODEL_PATH` is left empty, the game will attempt to download
+[Qwen3-4B-Instruct-Q4_K_M](https://huggingface.co/bartowski/Qwen3-4B-Instruct-GGUF)
+(~2.5 GB) from HuggingFace on first run. This may require a free HuggingFace
+account and accepting the model licence — if you get a 401 error, see the
+note in `config.py`.
+
+**Recommended model:** Qwen3 4B Q4_K_M (~2.5 GB, ~3.5 GB RAM). Runs well on
+any modern laptop. Smaller alternatives (1–2 GB) work but produce noticeably
+weaker narrative.
+
+### Choosing a backend
+
+Set `LLM_BACKEND` in `config.py`:
+
+| Value | Behaviour |
+|---|---|
+| `"auto"` | Tries Ollama first, falls back to embedded (default) |
+| `"ollama"` | Ollama only — fails if not running |
+| `"embedded"` | Embedded only — ignores Ollama |
+
+---
 
 ## The world
 
