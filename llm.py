@@ -10,6 +10,7 @@ import requests
 from config import (
     OLLAMA_URL, OLLAMA_MODEL,
     LLM_BACKEND,
+    EMBEDDED_MODEL_PATH,
     EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME, EMBEDDED_MODEL_URL,
     HF_TOKEN,
 )
@@ -50,6 +51,40 @@ _WORLD_RULES = (
 # Backend initialisation
 # ---------------------------------------------------------------------------
 
+def _resolve_model_path():
+    """
+    Return the path to the model file to load, downloading if necessary.
+    Returns a string path on success, or "ERROR: message" on failure.
+    """
+    # Option 1: explicit local path in config
+    if EMBEDDED_MODEL_PATH:
+        if os.path.exists(EMBEDDED_MODEL_PATH):
+            return EMBEDDED_MODEL_PATH
+        return (
+            f"ERROR: EMBEDDED_MODEL_PATH is set but the file was not found:\n"
+            f"  {EMBEDDED_MODEL_PATH}\n"
+            f"  Check the path in config.py."
+        )
+
+    # Option 2: previously downloaded file in the model cache dir
+    cached = os.path.join(EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME)
+    if os.path.exists(cached):
+        return cached
+
+    # Option 3: attempt automatic download
+    if not EMBEDDED_MODEL_URL:
+        return (
+            "ERROR: No model file found and no download URL is configured.\n"
+            "  Set EMBEDDED_MODEL_PATH in config.py to point to a local .gguf file.\n"
+            "  Any model from Ollama, LM Studio, or a direct download will work."
+        )
+    try:
+        _download_model(cached)
+        return cached
+    except Exception as exc:
+        return f"ERROR: {exc}"
+
+
 def _download_model(dest_path):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     part_path = dest_path + ".part"
@@ -59,9 +94,12 @@ def _download_model(dest_path):
     if resp.status_code == 401:
         raise RuntimeError(
             "HuggingFace returned 401 Unauthorized.\n"
-            "  The model repo may require authentication. To fix this:\n"
+            "  Quickest fix: download the model manually (via Ollama, LM Studio,\n"
+            "  or a browser) and set  EMBEDDED_MODEL_PATH = '/path/to/file.gguf'\n"
+            "  in config.py.\n"
+            "  Alternatively, authenticate with HuggingFace:\n"
             "  1. Create a free account at https://huggingface.co\n"
-            "  2. Accept the model licence on the model's HuggingFace page\n"
+            "  2. Accept the model licence on its HuggingFace page\n"
             "  3. Generate a token at https://huggingface.co/settings/tokens\n"
             "  4. Set  HF_TOKEN = 'hf_...'  in config.py and retry."
         )
@@ -117,16 +155,13 @@ def init_backend():
         except ImportError:
             return False, (
                 "llama-cpp-python is not installed.\n"
-                "  Run: pip install llama-cpp-python"
+                "  Run: pip install llama-cpp-python "
+                "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             )
 
-        model_path = os.path.join(EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME)
-
-        if not os.path.exists(model_path):
-            try:
-                _download_model(model_path)
-            except Exception as exc:
-                return False, f"Model download failed: {exc}"
+        model_path = _resolve_model_path()
+        if isinstance(model_path, str) and model_path.startswith("ERROR:"):
+            return False, model_path[6:]
 
         print(f"  Loading model (may take ~30 s on first run)...", end=' ', flush=True)
         try:
@@ -140,7 +175,7 @@ def init_backend():
             return False, f"Failed to load model: {exc}"
         print("done.")
         _backend_type = "embedded"
-        return True, f"Embedded ({EMBEDDED_MODEL_FILENAME})"
+        return True, f"Embedded ({os.path.basename(model_path)})"
 
     return False, f"Unknown LLM_BACKEND value '{backend}' in config.py."
 

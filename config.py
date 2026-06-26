@@ -13,12 +13,21 @@ NPC_TICK_INTERVAL = 3  # NPCs act every N player turns
 MAP_STYLE = "symbols"  # terminal mini-map style
 
 LLM_BACKEND = "auto"  # "auto" | "ollama" | "embedded"
+
+# --- Embedded model: Option 1 — point at a local .gguf file you already have ---
+# Any GGUF downloaded via Ollama, LM Studio, or a direct download will work.
+# When set, the automatic download below is skipped entirely.
+EMBEDDED_MODEL_PATH = ""  # e.g. "/home/user/models/Qwen3-4B-Instruct-Q4_K_M.gguf"
+
+# --- Embedded model: Option 2 — automatic download on first run ---
+# Requires a free HuggingFace account and accepting the model licence.
+# Ignored when EMBEDDED_MODEL_PATH points to an existing file.
 EMBEDDED_MODEL_DIR = os.path.expanduser("~/.local/share/millhaven/models")
 EMBEDDED_MODEL_FILENAME = "Qwen3-4B-Instruct-Q4_K_M.gguf"
 EMBEDDED_MODEL_URL = (
     "https://huggingface.co/bartowski/Qwen3-4B-Instruct-GGUF"
     "/resolve/main/Qwen3-4B-Instruct-Q4_K_M.gguf"
 )
-# HuggingFace access token — needed if the model repo requires authentication.
-# Get one free at https://huggingface.co/settings/tokens
+# HuggingFace token — required if the download returns 401.
+# Generate one at https://huggingface.co/settings/tokens
 HF_TOKEN = ""
