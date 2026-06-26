@@ -14,7 +14,11 @@ MAP_STYLE = "symbols"  # terminal mini-map style
 
 LLM_BACKEND = "auto"  # "auto" | "ollama" | "embedded"
 EMBEDDED_MODEL_DIR = os.path.expanduser("~/.local/share/millhaven/models")
-EMBEDDED_MODEL_FILENAME = "Qwen3-4B-Q4_K_M.gguf"
+EMBEDDED_MODEL_FILENAME = "Qwen3-4B-Instruct-Q4_K_M.gguf"
 EMBEDDED_MODEL_URL = (
-    "https://huggingface.co/bartowski/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
+    "https://huggingface.co/bartowski/Qwen3-4B-Instruct-GGUF"
+    "/resolve/main/Qwen3-4B-Instruct-Q4_K_M.gguf"
 )
+# HuggingFace access token — needed if the model repo requires authentication.
+# Get one free at https://huggingface.co/settings/tokens
+HF_TOKEN = ""

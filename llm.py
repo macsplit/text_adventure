@@ -11,6 +11,7 @@ from config import (
     OLLAMA_URL, OLLAMA_MODEL,
     LLM_BACKEND,
     EMBEDDED_MODEL_DIR, EMBEDDED_MODEL_FILENAME, EMBEDDED_MODEL_URL,
+    HF_TOKEN,
 )
 
 _SESSION = requests.Session()
@@ -53,7 +54,17 @@ def _download_model(dest_path):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     part_path = dest_path + ".part"
     print(f"\n  Downloading {EMBEDDED_MODEL_FILENAME} (~2.5 GB) ...")
-    resp = _SESSION.get(EMBEDDED_MODEL_URL, stream=True, timeout=60)
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+    resp = _SESSION.get(EMBEDDED_MODEL_URL, stream=True, timeout=60, headers=headers)
+    if resp.status_code == 401:
+        raise RuntimeError(
+            "HuggingFace returned 401 Unauthorized.\n"
+            "  The model repo may require authentication. To fix this:\n"
+            "  1. Create a free account at https://huggingface.co\n"
+            "  2. Accept the model licence on the model's HuggingFace page\n"
+            "  3. Generate a token at https://huggingface.co/settings/tokens\n"
+            "  4. Set  HF_TOKEN = 'hf_...'  in config.py and retry."
+        )
     resp.raise_for_status()
     total = int(resp.headers.get('content-length', 0))
     downloaded = 0
