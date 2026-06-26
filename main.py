@@ -1,5 +1,5 @@
 """
-Millhaven — a text adventure driven by a local LLM via Ollama.
+Millhaven — a text adventure driven by a local LLM.
 
 Usage:
   python init_town.py    # first time only: generates the world
@@ -10,6 +10,115 @@ import os
 import re
 import sys
 import textwrap
+
+
+def _bootstrap_config():
+    """Create config.py interactively if it doesn't exist."""
+    if os.path.exists('config.py'):
+        return
+
+    print()
+    print("=" * 60)
+    print("  MILLHAVEN — first-run setup")
+    print("=" * 60)
+    print()
+    print("No config.py found. Let's set one up.")
+    print("(You can edit config.py at any time to change these settings.)")
+    print()
+
+    def ask(prompt, default=""):
+        suffix = f" [{default}]" if default else ""
+        try:
+            val = input(f"  {prompt}{suffix}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nSetup cancelled.")
+            sys.exit(0)
+        return val if val else default
+
+    def choose(prompt, options, default="1"):
+        for i, (label, desc) in enumerate(options, 1):
+            marker = " (recommended)" if str(i) == default else ""
+            print(f"    [{i}] {label} — {desc}{marker}")
+        while True:
+            val = ask(prompt, default)
+            if val in [str(i) for i in range(1, len(options) + 1)]:
+                return options[int(val) - 1][0]
+            print("      Please enter a number from the list.")
+
+    # --- Backend ---
+    print("Which LLM backend do you want to use?")
+    backend = choose("Choice", [
+        ("auto",     "try Ollama first, fall back to embedded model"),
+        ("ollama",   "Ollama only (must be running separately)"),
+        ("embedded", "embedded model only (no Ollama needed)"),
+    ])
+    print()
+
+    # --- Ollama settings ---
+    ollama_url   = "http://localhost:11434"
+    ollama_model = "qwen2.5:14b"
+    if backend in ("auto", "ollama"):
+        print("Ollama settings:")
+        ollama_url   = ask("Ollama URL",   "http://localhost:11434")
+        ollama_model = ask("Model name",   "qwen2.5:14b")
+        print()
+
+    # --- Embedded model settings ---
+    embedded_path = ""
+    hf_token      = ""
+    if backend in ("auto", "embedded"):
+        print("Embedded model settings:")
+        has_local = ask("Do you have a local .gguf file to use? [y/N]", "N").lower()
+        if has_local == "y":
+            embedded_path = ask("Path to .gguf file")
+            while embedded_path and not os.path.exists(embedded_path):
+                print(f"      File not found: {embedded_path}")
+                embedded_path = ask("Path to .gguf file")
+        else:
+            print()
+            print("  The game can download Qwen3VL-4B-Instruct (~2.5 GB) from")
+            print("  HuggingFace on first run. Some repos require a free account")
+            print("  and a token — leave blank to try without.")
+            hf_token = ask("HuggingFace token (blank to skip)", "")
+        print()
+
+    # --- Write config.py ---
+    lines = [
+        "import os",
+        "",
+        f'OLLAMA_URL   = "{ollama_url}"',
+        f'OLLAMA_MODEL = "{ollama_model}"',
+        'DB_PATH      = "millhaven.db"',
+        "GRID_WIDTH   = 100",
+        "GRID_HEIGHT  = 100",
+        'GAME_TITLE   = "Millhaven"',
+        "PLAYER_START_X    = 50",
+        "PLAYER_START_Y    = 50",
+        "PLAYER_START_Z    = 0",
+        "NPC_TICK_INTERVAL = 3",
+        'MAP_STYLE         = "symbols"',
+        "",
+        f'LLM_BACKEND = "{backend}"',
+        "",
+        f'EMBEDDED_MODEL_PATH     = "{embedded_path}"',
+        f'EMBEDDED_MODEL_DIR      = os.path.expanduser("~/.local/share/millhaven/models")',
+        f'EMBEDDED_MODEL_FILENAME = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"',
+        'EMBEDDED_MODEL_URL = (',
+        '    "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF"',
+        '    "/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf"',
+        ')',
+        f'HF_TOKEN = "{hf_token}"',
+    ]
+    with open('config.py', 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+
+    print("  config.py created.")
+    print()
+
+
+_bootstrap_config()
+
+
 try:
     import readline  # noqa: F401  (enables arrow-key editing and history in input())
 except ImportError:
