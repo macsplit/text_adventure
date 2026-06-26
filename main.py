@@ -192,42 +192,64 @@ def print_separator():
 
 
 class _StreamPrinter:
-    """Receives LLM tokens, prints them immediately, strips **markup** on the fly."""
+    """Receives LLM tokens, prints them word-by-word, strips **markup** on the fly."""
 
     def __init__(self):
         self.started = False
         self._col = 0
-        self._star = False  # buffering a lone '*' to check for '**'
+        self._lines = 0   # newlines emitted (for cursor-up calculation)
+        self._star = False
+        self._buf = ''    # accumulates chars up to the next word boundary
+
+    def _newline(self):
+        print(flush=True)
+        self._col = 0
+        self._lines += 1
+
+    def _emit_word(self):
+        """Print the buffered word, wrapping beforehand if it won't fit."""
+        word = self._buf
+        self._buf = ''
+        if not word:
+            return
+        if self._col > 0 and self._col + len(word) > WIDTH:
+            self._newline()
+        print(word, end='', flush=True)
+        self._col += len(word)
 
     def feed(self, token):
-        # Strip **bold** markers, handling splits across token boundaries.
+        # Strip **bold** markers across token boundaries.
         out = ''
         for ch in token:
             if ch == '*':
                 if self._star:
-                    self._star = False  # second '*' — discard both
+                    self._star = False
                 else:
-                    self._star = True   # first '*' — hold
+                    self._star = True
             else:
                 if self._star:
-                    out += '*'          # lone '*', not a pair — keep it
+                    out += '*'
                     self._star = False
                 out += ch
         if not out:
             return
         if not self.started:
             print()
+            self._lines = 1
             self.started = True
         for ch in out:
             if ch == '\n':
-                print(flush=True)
-                self._col = 0
+                self._emit_word()
+                self._newline()
+            elif ch == ' ':
+                self._emit_word()
+                if self._col < WIDTH:
+                    print(' ', end='', flush=True)
+                    self._col += 1
+                else:
+                    self._newline()
             else:
-                print(ch, end='', flush=True)
-                self._col += 1
-                if self._col >= WIDTH:
-                    print(flush=True)
-                    self._col = 0
+                self._buf += ch
 
 
 _GENERIC_LOCATION_NAMES = {
@@ -519,7 +541,6 @@ def game_loop(player):
         streamer = _StreamPrinter() if USE_COLOR else None
         if streamer:
             llm.set_narrative_stream(streamer.feed)
-            print('\033[s', end='', flush=True)  # save cursor position
 
         # Process player action
         result = engine.process_input(raw, player)
@@ -530,10 +551,12 @@ def game_loop(player):
         # Refresh player state from DB (action handlers may have updated it)
         player = db.get_player()
 
-        # If streaming produced visible output, wipe it and reprint with full
-        # entity highlighting via print_output().
+        # Wipe the streamed draft and reprint with full entity highlighting.
+        # Move up exactly as many lines as the streamer emitted, go to column 0,
+        # then erase to end of screen. More portable than save/restore cursor.
         if streamer and streamer.started:
-            print('\033[u\033[0J', end='', flush=True)
+            up = streamer._lines + (1 if streamer._col > 0 or streamer._buf else 0)
+            print(f'\033[{up}A\r\033[0J', end='', flush=True)
 
         if result == '__LEAVE_GAME__':
             print(colour(wrap("You continue on your travels, leaving Millhaven behind you. "
