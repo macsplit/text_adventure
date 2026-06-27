@@ -88,16 +88,16 @@ def _resolve_model_path():
 def _download_model(dest_path):
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     part_path = dest_path + ".part"
-    print(f"\n  Downloading {EMBEDDED_MODEL_FILENAME} (~2.5 GB) ...")
+    print(f"\n  Downloading {EMBEDDED_MODEL_FILENAME} (~1 GB) ...")
     headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
     resp = _SESSION.get(EMBEDDED_MODEL_URL, stream=True, timeout=60, headers=headers)
-    if resp.status_code == 401:
+    if resp.status_code == 401 or 'text/html' in resp.headers.get('content-type', ''):
         raise RuntimeError(
-            "HuggingFace returned 401 Unauthorized.\n"
+            "HuggingFace requires authentication to download this model.\n"
             "  Quickest fix: download the model manually (via Ollama, LM Studio,\n"
             "  or a browser) and set  EMBEDDED_MODEL_PATH = '/path/to/file.gguf'\n"
             "  in config.py.\n"
-            "  Alternatively, authenticate with HuggingFace:\n"
+            "  Alternatively:\n"
             "  1. Create a free account at https://huggingface.co\n"
             "  2. Accept the model licence on its HuggingFace page\n"
             "  3. Generate a token at https://huggingface.co/settings/tokens\n"
@@ -118,6 +118,17 @@ def _download_model(dest_path):
                     print(f"\r  {mb_done:.0f} / {mb_total:.0f} MB  ({pct:.0f}%)",
                           end='', flush=True)
     print()
+    # Verify the download is actually a GGUF file, not an HTML error page.
+    with open(part_path, 'rb') as f:
+        magic = f.read(4)
+    if magic != b'GGUF':
+        os.remove(part_path)
+        raise RuntimeError(
+            "Downloaded file is not a valid GGUF model.\n"
+            "  HuggingFace may have returned an error page instead of the model.\n"
+            "  Check your HF_TOKEN and that you have accepted the model licence\n"
+            "  at https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF"
+        )
     os.rename(part_path, dest_path)
     print("  Download complete.")
 
@@ -165,15 +176,40 @@ def init_backend():
 
         print(f"  Loading model (may take ~30 s on first run)...", end=' ', flush=True)
         try:
-            _llama = Llama(
-                model_path=model_path,
-                n_ctx=4096,
-                n_threads=os.cpu_count() or 4,
-                verbose=False,
-            )
+            import sys
+            from io import StringIO
+            old_stderr = sys.stderr
+            sys.stderr = StringIO()  # suppress llama-cpp-python context warnings
+            try:
+                _llama = Llama(
+                    model_path=model_path,
+                    n_ctx=2048,
+                    n_threads=max(1, (os.cpu_count() or 4) // 2),
+                    verbose=False,
+                )
+            finally:
+                sys.stderr = old_stderr
         except Exception as exc:
             return False, f"Failed to load model: {exc}"
         print("done.")
+
+        # Warm up the model: do a realistic inference to prime the model pipeline
+        # and improve latency/streaming consistency on first real inference.
+        try:
+            for _ in _llama.create_chat_completion(
+                messages=[
+                    {"role": "user", "content": "You are a helpful assistant. Say hello."},
+                    {"role": "assistant", "content": "Hello"},
+                    {"role": "user", "content": "What is 2+2?"},
+                ],
+                temperature=0.5,
+                max_tokens=20,
+                stream=True,
+            ):
+                pass
+        except Exception:
+            pass
+
         _backend_type = "embedded"
         return True, f"Embedded ({os.path.basename(model_path)})"
 

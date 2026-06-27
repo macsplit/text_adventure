@@ -10,6 +10,8 @@ import os
 import re
 import sys
 import textwrap
+import time
+import threading
 
 
 def _bootstrap_config():
@@ -129,10 +131,60 @@ import llm
 from config import DB_PATH, NPC_TICK_INTERVAL, GAME_TITLE, PLAYER_START_X, PLAYER_START_Y
 
 
-WIDTH = 78  # text wrap width
+try:
+    WIDTH = max(60, int(os.popen('tput cols').read().strip()))
+except Exception:
+    WIDTH = 78  # fallback if terminal width detection fails
 
 
 USE_COLOR = sys.stdout.isatty() and os.environ.get('NO_COLOR') is None
+
+_animation_stop = threading.Event()
+
+
+def _hide_cursor():
+    """Hide the terminal cursor."""
+    sys.stdout.write('\033[?25l')
+    sys.stdout.flush()
+
+
+def _show_cursor():
+    """Show the terminal cursor."""
+    sys.stdout.write('\033[?25h')
+    sys.stdout.flush()
+
+
+def _spinner_animation():
+    """Rotating spinner moving left-to-right with smooth spectrum colors."""
+    spectrum = [
+        '\033[38;5;196m',  # red
+        '\033[38;5;202m',  # orange
+        '\033[38;5;226m',  # yellow
+        '\033[38;5;118m',  # lime
+        '\033[38;5;46m',   # green
+        '\033[38;5;51m',   # cyan
+        '\033[38;5;21m',   # blue
+        '\033[38;5;129m',  # purple
+        '\033[38;5;135m',  # magenta
+        '\033[38;5;125m',  # back towards red
+    ]
+    spinner_chars = ['/', '-', '\\', '|']
+    frame = 0
+
+    for pos in range(WIDTH):
+        if _animation_stop.is_set():
+            break
+        char = spinner_chars[frame % len(spinner_chars)]
+        color = spectrum[frame % len(spectrum)]
+        line = ' ' * pos + f'{color}{char}\033[0m' + ' ' * (WIDTH - pos - 1)
+        sys.stdout.write(f'\r{line}')
+        sys.stdout.flush()
+        frame += 1
+        time.sleep(0.5)
+
+    # Clear the line
+    sys.stdout.write('\r' + ' ' * WIDTH + '\r')
+    sys.stdout.flush()
 
 
 class C:
@@ -147,6 +199,7 @@ class C:
     cyan = '\033[36m'
     white = '\033[37m'
     bright_black = '\033[90m'
+    text = '\033[38;5;188m'  # pale grey/cream for standard narrative text
 
 
 def colour(text, *codes):
@@ -197,9 +250,10 @@ class _StreamPrinter:
     def __init__(self):
         self.started = False
         self._col = 0
-        self._lines = 0   # newlines emitted (for cursor-up calculation)
+        self._lines = 0  # completed newlines printed, used to rewind cursor
         self._star = False
-        self._buf = ''    # accumulates chars up to the next word boundary
+        self._buf = ''   # chars buffered up to the next word boundary
+        self._raw = ''   # raw tokens received, used to detect action prefix
 
     def _newline(self):
         print(flush=True)
@@ -207,7 +261,6 @@ class _StreamPrinter:
         self._lines += 1
 
     def _emit_word(self):
-        """Print the buffered word, wrapping beforehand if it won't fit."""
         word = self._buf
         self._buf = ''
         if not word:
@@ -218,6 +271,7 @@ class _StreamPrinter:
         self._col += len(word)
 
     def feed(self, token):
+        self._raw += token
         # Strip **bold** markers across token boundaries.
         out = ''
         for ch in token:
@@ -235,7 +289,8 @@ class _StreamPrinter:
             return
         if not self.started:
             print()
-            self._lines = 1
+            self._lines += 1
+            print(C.text, end='', flush=True)
             self.started = True
         for ch in out:
             if ch == '\n':
@@ -250,6 +305,13 @@ class _StreamPrinter:
                     self._newline()
             else:
                 self._buf += ch
+
+    def finish(self):
+        """Flush the word buffer and reset terminal colour."""
+        self._emit_word()
+        print(C.reset, end='', flush=True)
+        if self._col > 0:
+            print(flush=True)
 
 
 _GENERIC_LOCATION_NAMES = {
@@ -393,6 +455,34 @@ def _protect_term_wraps(line, terms):
     return protected
 
 
+def _print_word_by_word(text, delay_sec=0.075):
+    """Print text one word at a time. Returns number of lines printed (for rewinding)."""
+    lines_printed = 0
+    col = 0
+    for line in text.split('\n'):
+        if col > 0:
+            print()
+            lines_printed += 1
+            col = 0
+        words = line.split()
+        for word in words:
+            if col > 0 and col + len(word) + 1 > WIDTH:
+                print()
+                lines_printed += 1
+                col = 0
+            if col > 0:
+                print(' ', end='', flush=True)
+                col += 1
+            print(word, end='', flush=True)
+            col += len(word)
+            time.sleep(delay_sec)
+    print()
+    lines_printed += 1
+    if col > 0:
+        lines_printed += 1
+    return lines_printed
+
+
 def print_output(text, player=None):
     print()
     plain_text, marked = _extract_markup(text)
@@ -417,18 +507,21 @@ def print_output(text, player=None):
         elif line.strip() == '':
             out_lines.append('')
         else:
+            # Add blank line before "Exits:" to separate prose from location info
+            if line.strip().startswith('Exits:') and out_lines and out_lines[-1].strip():
+                out_lines.append('')
             line = _protect_term_wraps(line, terms)
             out_lines.extend(
                 textwrap.wrap(line, width=WIDTH) or ['']
             )
 
-    # Wrap the non-ANSI portions in white, but emit ANSI art lines raw
+    # Wrap the non-ANSI portions in text colour, but emit ANSI art lines raw
     for line in out_lines:
         line = line.replace(_TERM_SPACE, ' ')
         if '\033[' in line:
             print(line + C.reset)
         else:
-            print(C.white + _highlight_nodes(line, terms, C.white) + C.reset if USE_COLOR else line)
+            print(C.text + _highlight_nodes(line, terms, C.text) + C.reset if USE_COLOR else line)
     print()
 
 
@@ -505,20 +598,56 @@ def create_player():
     return db.get_character(cid)
 
 
+def _print_status(player):
+    """Print the status block (health, hunger, time, location, etc.)"""
+    p = db.get_character(player['id'])
+    print("  "
+          + colour(f"Time: {engine._format_time()}", C.cyan)
+          + "   "
+          + colour(f"Location: ({p['x']},{p['y']},z={p['z']})", C.magenta)
+          + "   "
+          + colour(f"Money: {p['money']}p", C.yellow))
+    print("  "
+          + colour(f"Health: {p['health']}/100", stat_colour(p['health'], higher_bad=False))
+          + "   "
+          + colour(f"Hunger: {p['hunger']}/100", stat_colour(p['hunger']))
+          + "   "
+          + colour(f"Thirst: {p.get('thirst', 30)}/100", stat_colour(p.get('thirst', 30)))
+          + "   "
+          + colour(f"Energy: {p['energy']}/100", stat_colour(p['energy'], higher_bad=False)))
+    print_separator()
+
+
 def game_loop(player):
     turn = 0
-    print_separator()
-    print(f"  Time: {engine._format_time()}   Location: ({player['x']},{player['y']})")
-    print_separator()
-
-    # Opening look
-    opening = engine.action_look(player, {})
-    print_output(opening, player)
+    _hide_cursor()
 
     while True:
-        # Prompt
+        if turn == 0:
+            # Turn zero: opening scene (before any human input)
+            print_separator()
+            print(f"  Time: {engine._format_time()}   Location: ({player['x']},{player['y']})")
+            print_separator()
+            _animation_stop.clear()
+            anim_thread = threading.Thread(target=_spinner_animation, daemon=True)
+            anim_thread.start()
+            result = engine.action_look(player, {})
+            _animation_stop.set()
+            anim_thread.join(timeout=1.0)
+            lines = _print_word_by_word(result)  # 75ms per word for opening scene
+            # Rewind cursor and reprint with highlighting
+            print(f'\033[{lines}A\r\033[0J', end='', flush=True)
+            print_output(result, player)
+            # Show status for turn zero
+            _print_status(player)
+            turn += 1
+            continue
+
+        # Prompt (turns 1+)
         try:
+            _show_cursor()
             raw = input(colour(f"\n[{player['name']}]> ", C.green, C.bold)).strip()
+            _hide_cursor()
         except (EOFError, KeyboardInterrupt):
             print("\nFarewell.")
             break
@@ -534,29 +663,25 @@ def game_loop(player):
         # Advance game tick
         ticks = int(db.get_state('game_ticks', 0))
         db.set_state('game_ticks', ticks + 1)
-        turn += 1
 
-        # Show separator immediately; begin streaming narrative tokens to terminal.
+        # Show separator immediately
         print_separator()
-        streamer = _StreamPrinter() if USE_COLOR else None
-        if streamer:
-            llm.set_narrative_stream(streamer.feed)
 
-        # Process player action
+        # Process player action with spinner animation (unless it's a map)
+        _animation_stop.clear()
+        anim_thread = threading.Thread(target=_spinner_animation, daemon=True)
+        anim_thread.start()
         result = engine.process_input(raw, player)
-
-        if streamer:
-            llm.clear_narrative_stream()
+        _animation_stop.set()
+        anim_thread.join(timeout=1.0)
 
         # Refresh player state from DB (action handlers may have updated it)
         player = db.get_player()
 
-        # Wipe the streamed draft and reprint with full entity highlighting.
-        # Move up exactly as many lines as the streamer emitted, go to column 0,
-        # then erase to end of screen. More portable than save/restore cursor.
-        if streamer and streamer.started:
-            up = streamer._lines + (1 if streamer._col > 0 or streamer._buf else 0)
-            print(f'\033[{up}A\r\033[0J', end='', flush=True)
+        # Word-by-word output then rewind and highlight (skip for maps/ANSI art)
+        if '\033[' not in result:
+            lines = _print_word_by_word(result)
+            print(f'\033[{lines}A\r\033[0J', end='', flush=True)
 
         if result == '__LEAVE_GAME__':
             print(colour(wrap("You continue on your travels, leaving Millhaven behind you. "
@@ -566,6 +691,7 @@ def game_loop(player):
             print()
             break
         print_output(result, player)
+        print()  # newline before status
 
         # Biological needs tick
         warnings = engine.tick_needs(player['id'])
@@ -607,22 +733,8 @@ def game_loop(player):
                 print()
 
         # Status line
-        p = db.get_character(player['id'])
-        print("  "
-              + colour(f"Time: {engine._format_time()}", C.cyan)
-              + "   "
-              + colour(f"Location: ({p['x']},{p['y']},z={p['z']})", C.magenta)
-              + "   "
-              + colour(f"Money: {p['money']}p", C.yellow))
-        print("  "
-              + colour(f"Health: {p['health']}/100", stat_colour(p['health'], higher_bad=False))
-              + "   "
-              + colour(f"Hunger: {p['hunger']}/100", stat_colour(p['hunger']))
-              + "   "
-              + colour(f"Thirst: {p.get('thirst', 30)}/100", stat_colour(p.get('thirst', 30)))
-              + "   "
-              + colour(f"Energy: {p['energy']}/100", stat_colour(p['energy'], higher_bad=False)))
-        print_separator()
+        _print_status(player)
+        turn += 1
 
 
 def main():
