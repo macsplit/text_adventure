@@ -2,6 +2,8 @@
 
 A text adventure set in a quiet English village, driven by a local LLM.
 
+![Screenshot](screenshot.png)
+
 ## Requirements
 
 - Python 3.9+
